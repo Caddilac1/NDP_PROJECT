@@ -40,7 +40,11 @@ disconnect_button = tk.Button(top_frame, text="Disconnect", command=disconnect)
 disconnect_button.pack(side="left", padx=5)
 
 '''Main frame for video display'''
-
+video_frame = tk.Frame(root, width=1000,height=500, bg="black", relief="solid", bd=2)
+video_frame.pack(pady=20)
+video_frame.pack_propagate(False)
+video_label = tk.Label(video_frame, text="Video Stream...", bg="black", fg="white", font=("Arial",15))
+video_label.pack(expand=True)
 
 '''Control buttons frame for play, pause, stop, teardown'''
 bottom_frame = tk.Frame(root)
