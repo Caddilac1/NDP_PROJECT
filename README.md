@@ -87,8 +87,8 @@ Terminates the session and releases resources.
 ### Clone the Repository
 
 ```bash
-git clone <repository-url>
-cd project
+git clone https://github.com/Caddilac1/NDP_PROJECT.git
+cd NDP_PROJECT
 ```
 
 ### Create a Virtual Environment

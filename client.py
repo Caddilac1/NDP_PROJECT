@@ -33,7 +33,7 @@ label.pack(side="left", padx=5)
 entry = tk.Entry(top_frame, width=50)
 entry.pack(side="left", padx=5)
 
-connection_status = tk.Label(top_frame, text="Status: Disconnected", fg="red", font=("Arial", 12))
+connection_status = tk.Label(top_frame, text="Status: Disconnected", fg="red", font=("Arial", 11))
 connection_status.pack(side="left", padx=10)
 
 # disconnect_button = tk.Button(top_frame, text="Disconnect", command=disconnect)
@@ -61,5 +61,6 @@ pause_button.pack(side="left", padx=5)
 
 teardown_button = tk.Button(bottom_frame, text="Teardown", command=teardown)
 teardown_button.pack(side="left", padx=5)
+
 
 root.mainloop()
