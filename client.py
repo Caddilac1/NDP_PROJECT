@@ -6,6 +6,17 @@ def connect():
 def disconnect():
     pass
 
+def setup():
+    pass
+
+def play():
+    pass
+
+def pause():
+    pass
+
+def teardown():
+    pass
 
 '''Main application windoww setup'''
 root = tk.Tk()
@@ -29,5 +40,22 @@ disconnect_button = tk.Button(top_frame, text="Disconnect", command=disconnect)
 disconnect_button.pack(side="left", padx=5)
 
 '''Main frame for video display'''
+
+
 '''Control buttons frame for play, pause, stop, teardown'''
+bottom_frame = tk.Frame(root)
+bottom_frame.pack(pady=10)
+
+setup_button = tk.Button(bottom_frame, text="Setup", command=setup)
+setup_button.pack(side="left", padx=5)
+
+play_button = tk.Button(bottom_frame, text="Play", command=play)
+play_button.pack(side="left", padx=5)
+
+pause_button = tk.Button(bottom_frame, text="Pause", command=pause)
+pause_button.pack(side="left", padx=5)
+
+teardown_button = tk.Button(bottom_frame, text="Teardown", command=teardown)
+teardown_button.pack(side="left", padx=5)
+
 root.mainloop()
