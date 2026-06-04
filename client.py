@@ -1,10 +1,10 @@
 import tkinter as tk
 
 def connect():
-    pass
+    connection_status.config(text="Status: Connected", fg="green")
 
-def disconnect():
-    pass
+# def disconnect():
+#     pass
 
 def setup():
     pass
@@ -33,11 +33,11 @@ label.pack(side="left", padx=5)
 entry = tk.Entry(top_frame, width=50)
 entry.pack(side="left", padx=5)
 
-connect_button = tk.Button(top_frame, text="Connect", command=connect)
-connect_button.pack(side="left", padx=5)
+connection_status = tk.Label(top_frame, text="Status: Disconnected", fg="red", font=("Arial", 12))
+connection_status.pack(side="left", padx=10)
 
-disconnect_button = tk.Button(top_frame, text="Disconnect", command=disconnect)
-disconnect_button.pack(side="left", padx=5)
+# disconnect_button = tk.Button(top_frame, text="Disconnect", command=disconnect)
+# disconnect_button.pack(side="left", padx=5)
 
 '''Main frame for video display'''
 video_frame = tk.Frame(root, width=1000,height=500, bg="black", relief="solid", bd=2)
