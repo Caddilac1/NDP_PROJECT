@@ -4,10 +4,12 @@ import socket
 
 
 RTSP_PORT = 8554
-# cseq = 1
+session_id = None
+cseq = 1
 # session_ID = None
 
 def setup():
+    global session_id, rtsp_socket
     url = entry.get()
     url = url.replace("rtsp://", "")
     parts = url.split("/")
@@ -23,7 +25,7 @@ def setup():
     
     connection_status.config(text="Status: Streaming", fg="green")
     
-    
+
     request = (
         f"SETUP rtsp://{url} RTSP/1.0\r\n"
         f"CSeq: 1\r\n"
@@ -44,7 +46,31 @@ def setup():
         print("Stored session:", session_id)
 
 def play():
-    pass
+    global rtsp_socket, cseq, session_id
+
+    if rtsp_socket is None:
+        print("Not connected")
+        return
+
+    url = entry.get()
+
+    request = (
+        f"PLAY {url} RTSP/1.0\r\n"
+        f"CSeq: {cseq}\r\n"
+        f"Session: {session_id}\r\n"
+        f"\r\n"
+    )
+
+    print("Sending PLAY request:")
+    print(request)
+
+    rtsp_socket.send(request.encode("utf-8"))
+
+    response = rtsp_socket.recv(4096).decode("utf-8")
+    print("Server response:")
+    print(response)
+
+    cseq += 1
 
 def pause():
     pass
