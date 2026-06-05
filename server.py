@@ -12,8 +12,9 @@ STATE_INIT = 0
 STATE_READY = 1
 STATE_PLAYING = 2
 
-
-AUDIO_PORT_OFFSET = 4
+# Audio port offset — must match AUDIO_RTP_PORT - RTP_PORT in client.py
+# Client video=5004, audio=5020, so offset=16
+AUDIO_PORT_OFFSET = 16
 
 
 class RTSPServerWorker(threading.Thread):
@@ -158,7 +159,6 @@ class RTSPServerWorker(threading.Thread):
         self.send_response(200, cseq, {"Session": self.session_id})
 
     def _audio_port(self):
-        """Audio RTP port = video port + 4, safely past all RTCP ports."""
         return (self.client_rtp_port or 5004) + AUDIO_PORT_OFFSET
 
     def _start_ffmpeg(self):
