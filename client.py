@@ -31,8 +31,17 @@ def setup():
     )
     
     rtsp_socket.send(request.encode(("utf-8")))
+    
     response = rtsp_socket.recv(4096).decode()
+    
     print(response)
+    
+    import re
+    match = re.search(r"Session:\s*(\d+)", response)
+
+    if match:
+        session_id = match.group(1)
+        print("Stored session:", session_id)
 
 def play():
     pass
