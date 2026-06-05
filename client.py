@@ -1,13 +1,38 @@
 import tkinter as tk
+import socket
 
-def connect():
-    connection_status.config(text="Status: Connected", fg="green")
 
-# def disconnect():
-#     pass
+
+RTSP_PORT = 8554
+# cseq = 1
+# session_ID = None
 
 def setup():
-    pass
+    url = entry.get()
+    url = url.replace("rtsp://", "")
+    parts = url.split("/")
+    server_ip = parts[0]
+    
+    if not url:
+        connection_status.config(text="Status: Please enter a stream URL", fg="red")
+        return
+    
+    rtsp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
+    
+    rtsp_socket.connect((server_ip, RTSP_PORT))
+    
+    connection_status.config(text="Status: Streaming", fg="green")
+    
+    
+    request = (
+        f"SETUP rtsp://{url} RTSP/1.0\r\n"
+        f"CSeq: 1\r\n"
+        f"Transport: RTP/UDP; client_port=5004-5005\r\n\r\n"
+    )
+    
+    rtsp_socket.send(request.encode(("utf-8")))
+    response = rtsp_socket.recv(4096).decode()
+    print(response)
 
 def play():
     pass
