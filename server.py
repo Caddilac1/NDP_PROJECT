@@ -4,6 +4,7 @@ import random
 import subprocess
 import os
 import signal
+import time
 
 RTSP_PORT = 8554
 CRLF = "\r\n"
@@ -12,9 +13,43 @@ STATE_INIT = 0
 STATE_READY = 1
 STATE_PLAYING = 2
 
-# Audio port offset — must match AUDIO_RTP_PORT - RTP_PORT in client.py
-# Client video=5004, audio=5020, so offset=16
 AUDIO_PORT_OFFSET = 16
+DEFAULT_VIDEO_PORT = 5004
+DEFAULT_AUDIO_PORT = 5020
+
+DEFAULT_WIDTH = 1280
+DEFAULT_HEIGHT = 720
+
+SESSION_ID_MIN = 100000
+SESSION_ID_MAX = 999999
+
+CLIENT_RECV_TIMEOUT = 30.0
+SOCKET_RECV_SIZE = 4096
+FFMPEG_STOP_TIMEOUT = 3
+PROBE_TIMEOUT = 5
+
+VIDEO_CODEC = "libx264"
+VIDEO_PRESET = "ultrafast"
+VIDEO_TUNE = "zerolatency"
+VIDEO_BITRATE = "800k"
+VIDEO_MAXRATE = "900k"
+VIDEO_BUFSIZE = "1600k"
+VIDEO_GOP = "60"
+
+AUDIO_CODEC = "libmp3lame"
+AUDIO_BITRATE = "128k"
+AUDIO_SAMPLE_RATE = "44100"
+AUDIO_CHANNELS = "2"
+
+RESPONSE_REASONS = {
+    200: "OK",
+    400: "Bad Request",
+    404: "Not Found",
+    455: "Method Not Valid in This State",
+    501: "Not Implemented",
+}
+
+RTSP_PUBLIC_METHODS = "OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN"
 
 
 class RTSPServerWorker(threading.Thread):
@@ -23,20 +58,22 @@ class RTSPServerWorker(threading.Thread):
         self.client_socket = client_socket
         self.client_address = client_address
         self.state = STATE_INIT
-        self.session_id = str(random.randint(100000, 999999))
+        self.session_id = str(random.randint(SESSION_ID_MIN, SESSION_ID_MAX))
         self.video_file = None
         self.client_rtp_port = None
         self.ffmpeg_proc = None
         self.cseq = 1
+        self.elapsed = 0.0
+        self.play_start_time = None
 
     def run(self):
         print(f"[RTSP] Client connected: {self.client_address}")
-        self.client_socket.settimeout(30.0)
+        self.client_socket.settimeout(CLIENT_RECV_TIMEOUT)
         try:
             buf = ""
             while True:
                 try:
-                    chunk = self.client_socket.recv(4096).decode("utf-8", errors="ignore")
+                    chunk = self.client_socket.recv(SOCKET_RECV_SIZE).decode("utf-8", errors="ignore")
                 except socket.timeout:
                     continue
                 if not chunk:
@@ -86,7 +123,7 @@ class RTSPServerWorker(threading.Thread):
 
     def handle_options(self, parts, headers, cseq):
         self.send_response(200, cseq, {
-            "Public": "OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN"
+            "Public": RTSP_PUBLIC_METHODS
         })
 
     def handle_describe(self, parts, headers, cseq):
@@ -128,8 +165,8 @@ class RTSPServerWorker(threading.Thread):
             "Session":   self.session_id,
             "Transport": (
                 f"RTP/UDP;unicast;"
-                f"client_port={client_port}-{client_port+1};"
-                f"server_port={client_port+1}-{client_port+2}"
+                f"client_port={client_port}-{client_port + 1};"
+                f"server_port={client_port}-{client_port + 1}"
             ),
         })
 
@@ -156,36 +193,39 @@ class RTSPServerWorker(threading.Thread):
     def handle_teardown(self, parts, headers, cseq):
         self._stop_ffmpeg()
         self.state = STATE_INIT
+        self.elapsed = 0.0
+        self.play_start_time = None
         self.send_response(200, cseq, {"Session": self.session_id})
 
     def _audio_port(self):
-        return (self.client_rtp_port or 5004) + AUDIO_PORT_OFFSET
+        return (self.client_rtp_port or DEFAULT_VIDEO_PORT) + AUDIO_PORT_OFFSET
 
     def _start_ffmpeg(self):
         if self.ffmpeg_proc and self.ffmpeg_proc.poll() is None:
             return
 
         client_ip  = self.client_address[0]
-        video_port = self.client_rtp_port or 5004
+        video_port = self.client_rtp_port or DEFAULT_VIDEO_PORT
         audio_port = self._audio_port()
         has_audio  = self._probe_has_audio(self.video_file)
         w, h       = self._probe_dimensions(self.video_file)
 
-        print(f"[DEBUG] video_port={video_port}, audio_port={audio_port}, has_audio={has_audio}")
+        print(f"[DEBUG] video_port={video_port}, audio_port={audio_port}, has_audio={has_audio}, seek={self.elapsed:.2f}s")
 
-        cmd = [
-            "ffmpeg",
-            "-re",
+        cmd = ["ffmpeg", "-re"]
+        if self.elapsed > 0:
+            cmd += ["-ss", f"{self.elapsed:.2f}"]
+        cmd += [
             "-i", self.video_file,
             "-map", "0:v:0",
-            "-vcodec", "libx264",
-            "-preset", "ultrafast",
-            "-tune", "zerolatency",
+            "-vcodec", VIDEO_CODEC,
+            "-preset", VIDEO_PRESET,
+            "-tune", VIDEO_TUNE,
             "-s", f"{w}x{h}",
-            "-b:v", "800k",
-            "-maxrate", "900k",
-            "-bufsize", "1600k",
-            "-g", "60",
+            "-b:v", VIDEO_BITRATE,
+            "-maxrate", VIDEO_MAXRATE,
+            "-bufsize", VIDEO_BUFSIZE,
+            "-g", VIDEO_GOP,
             "-f", "rtp",
             f"rtp://{client_ip}:{video_port}",
         ]
@@ -193,10 +233,10 @@ class RTSPServerWorker(threading.Thread):
         if has_audio:
             cmd += [
                 "-map", "0:a:0",
-                "-acodec", "libmp3lame",
-                "-b:a", "128k",
-                "-ar", "44100",
-                "-ac", "2",
+                "-acodec", AUDIO_CODEC,
+                "-b:a", AUDIO_BITRATE,
+                "-ar", AUDIO_SAMPLE_RATE,
+                "-ac", AUDIO_CHANNELS,
                 "-f", "rtp",
                 f"rtp://{client_ip}:{audio_port}",
             ]
@@ -213,9 +253,14 @@ class RTSPServerWorker(threading.Thread):
             kwargs["creationflags"] = 0x08000000
 
         self.ffmpeg_proc = subprocess.Popen(cmd, **kwargs)
+        self.play_start_time = time.time()
         threading.Thread(target=self._log_ffmpeg, daemon=True).start()
 
     def _stop_ffmpeg(self):
+        if self.play_start_time is not None:
+            self.elapsed += time.time() - self.play_start_time
+            self.play_start_time = None
+
         if self.ffmpeg_proc and self.ffmpeg_proc.poll() is None:
             try:
                 if os.name == "nt":
@@ -225,7 +270,7 @@ class RTSPServerWorker(threading.Thread):
             except Exception as e:
                 print(f"[FFmpeg] Stop error: {e}")
             try:
-                self.ffmpeg_proc.wait(timeout=3)
+                self.ffmpeg_proc.wait(timeout=FFMPEG_STOP_TIMEOUT)
             except subprocess.TimeoutExpired:
                 self.ffmpeg_proc.kill()
             self.ffmpeg_proc = None
@@ -241,7 +286,7 @@ class RTSPServerWorker(threading.Thread):
                 ["ffprobe", "-v", "error", "-select_streams", "a",
                  "-show_entries", "stream=codec_type",
                  "-of", "csv=p=0", filepath],
-                capture_output=True, text=True, timeout=5
+                capture_output=True, text=True, timeout=PROBE_TIMEOUT
             )
             return "audio" in result.stdout
         except Exception:
@@ -254,18 +299,18 @@ class RTSPServerWorker(threading.Thread):
                  "-select_streams", "v:0",
                  "-show_entries", "stream=width,height",
                  "-of", "csv=p=0", filepath],
-                capture_output=True, text=True, timeout=5
+                capture_output=True, text=True, timeout=PROBE_TIMEOUT
             )
             parts = result.stdout.strip().split(",")
             if len(parts) == 2:
                 return int(parts[0]), int(parts[1])
         except Exception:
             pass
-        return 1280, 720
+        return DEFAULT_WIDTH, DEFAULT_HEIGHT
 
-    def _build_sdp(self, has_audio: bool, width: int = 1280, height: int = 720) -> str:
+    def _build_sdp(self, has_audio: bool, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT) -> str:
         ip         = self.client_address[0]
-        video_port = self.client_rtp_port or 5004
+        video_port = self.client_rtp_port or DEFAULT_VIDEO_PORT
         audio_port = self._audio_port()
 
         sdp = (
@@ -303,17 +348,10 @@ class RTSPServerWorker(threading.Thread):
                     return int(ports.split("-")[0])
                 except (IndexError, ValueError):
                     pass
-        return 5004
+        return DEFAULT_VIDEO_PORT
 
     def send_response(self, code: int, cseq: str, headers: dict = None, body: str = ""):
-        reasons = {
-            200: "OK",
-            400: "Bad Request",
-            404: "Not Found",
-            455: "Method Not Valid in This State",
-            501: "Not Implemented",
-        }
-        reason = reasons.get(code, "Unknown")
+        reason = RESPONSE_REASONS.get(code, "Unknown")
         lines = [f"RTSP/1.0 {code} {reason}", f"CSeq: {cseq}"]
         if headers:
             for k, v in headers.items():
