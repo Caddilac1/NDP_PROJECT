@@ -25,7 +25,7 @@ rtsp_socket       = None
 session_id        = None
 rtsp_host         = "127.0.0.1"
 rtsp_path         = "stream.mp4"
-rtsp_full_url     = ""         
+rtsp_full_url     = ""
 rtsp_state        = "DISCONNECTED"
 
 video_width       = 0
@@ -40,8 +40,9 @@ video_stop_event  = threading.Event()
 _audio_sdp_file   = None
 _frame_queue      = queue.Queue(maxsize=1)
 _cseq             = 1
-_poll_generation  = 0   
-
+_poll_generation  = 0
+_rtsp_lock        = threading.Lock()
+_audio_start_generation = -1
 
 
 def update_status(text, color="black"):
@@ -73,37 +74,37 @@ def _recv_full_response(sock):
 
 def _send_rtsp(method, extra_headers=None):
     global session_id, _cseq, rtsp_socket
-    if rtsp_socket is None:
-        return None
-    url = rtsp_full_url
-    lines = [
-        f"{method} {url} RTSP/1.0",
-        f"CSeq: {_cseq}",
-    ]
-    if method == "SETUP":
-        lines.append(f"Transport: RTP/UDP;unicast;client_port={RTP_PORT}-{RTP_PORT+1}")
-    elif session_id:
-        lines.append(f"Session: {session_id}")
-    if extra_headers:
-        for k, v in extra_headers.items():
-            lines.append(f"{k}: {v}")
-    request = CRLF.join(lines) + CRLF + CRLF
-    print(f"\n[RTSP >>]\n{request.strip()}")
-    try:
-        rtsp_socket.sendall(request.encode("utf-8"))
-        resp = _recv_full_response(rtsp_socket)
-        print(f"[RTSP <<]\n{resp}")
-        if resp and "Session:" in resp:
-            for line in resp.splitlines():
-                if line.startswith("Session:"):
-                    session_id = line.split(":", 1)[1].strip().split(";")[0]
-                    break
-        _cseq += 1
-        return resp
-    except Exception as e:
-        print(f"[RTSP] {method} error: {e}")
-        return None
-
+    with _rtsp_lock:
+        if rtsp_socket is None:
+            return None
+        url = rtsp_full_url
+        lines = [
+            f"{method} {url} RTSP/1.0",
+            f"CSeq: {_cseq}",
+        ]
+        if method == "SETUP":
+            lines.append(f"Transport: RTP/UDP;unicast;client_port={RTP_PORT}-{RTP_PORT+1}")
+        elif session_id:
+            lines.append(f"Session: {session_id}")
+        if extra_headers:
+            for k, v in extra_headers.items():
+                lines.append(f"{k}: {v}")
+        request = CRLF.join(lines) + CRLF + CRLF
+        print(f"\n[RTSP >>]\n{request.strip()}")
+        try:
+            rtsp_socket.sendall(request.encode("utf-8"))
+            resp = _recv_full_response(rtsp_socket)
+            print(f"[RTSP <<]\n{resp}")
+            if resp and "Session:" in resp:
+                for line in resp.splitlines():
+                    if line.startswith("Session:"):
+                        session_id = line.split(":", 1)[1].strip().split(";")[0]
+                        break
+            _cseq += 1
+            return resp
+        except Exception as e:
+            print(f"[RTSP] {method} error: {e}")
+            return None
 
 
 def _parse_sdp(sdp_body):
@@ -128,7 +129,7 @@ def _log_stderr(proc, label):
     for line in proc.stderr:
         print(f"[{label}] {line.decode(errors='ignore').rstrip()}")
 
-def _ffmpeg_video_reader():
+def _ffmpeg_video_reader(gen):
     global ffmpeg_video_proc, video_width, video_height
 
     w, h = video_width or 1280, video_height or 720
@@ -171,6 +172,7 @@ def _ffmpeg_video_reader():
     threading.Thread(target=_log_stderr, args=(ffmpeg_video_proc, "Video"), daemon=True).start()
 
     frame_size = w * h * 3
+    first_frame = True
     while not video_stop_event.is_set():
         raw = ffmpeg_video_proc.stdout.read(frame_size)
         if len(raw) < frame_size:
@@ -184,6 +186,9 @@ def _ffmpeg_video_reader():
             _frame_queue.put_nowait(frame)
         except queue.Full:
             pass
+        if first_frame:
+            first_frame = False
+            root.after(0, _trigger_audio_start, gen)
 
     try:
         os.remove(sdp_path)
@@ -194,34 +199,44 @@ def _poll_frame(gen=0):
     if gen != _poll_generation or video_stop_event.is_set():
         return
     try:
-            frame     = _frame_queue.get_nowait()
-            frame_rgb = frame[:, :, ::-1]
-            pil_img   = Image.fromarray(frame_rgb)
-            vw = video_frame.winfo_width()  or 1000
-            vh = video_frame.winfo_height() or 500
-            scale   = min(vw / pil_img.width, vh / pil_img.height, 1.0)
-            new_w   = max(1, int(pil_img.width  * scale))
-            new_h   = max(1, int(pil_img.height * scale))
-            pil_img = pil_img.resize((new_w, new_h), Image.LANCZOS)
-            photo   = ImageTk.PhotoImage(pil_img)
-            video_label.config(image=photo, text="")
-            video_label.image = photo       
+        frame     = _frame_queue.get_nowait()
+        frame_rgb = frame[:, :, ::-1]
+        pil_img   = Image.fromarray(frame_rgb)
+        vw = video_frame.winfo_width()  or 1000
+        vh = video_frame.winfo_height() or 500
+        scale   = min(vw / pil_img.width, vh / pil_img.height, 1.0)
+        new_w   = max(1, int(pil_img.width  * scale))
+        new_h   = max(1, int(pil_img.height * scale))
+        pil_img = pil_img.resize((new_w, new_h), Image.LANCZOS)
+        photo   = ImageTk.PhotoImage(pil_img)
+        video_label.config(image=photo, text="")
+        video_label.image = photo
     except queue.Empty:
         pass
     root.after(33, _poll_frame, gen)
 
+def _trigger_audio_start(gen):
+    global _audio_start_generation
+    if gen != _poll_generation or video_stop_event.is_set():
+        return
+    if _audio_start_generation == gen:
+        return
+    _audio_start_generation = gen
+    start_audio()
+
 def start_video():
     global video_thread, _poll_generation
     _poll_generation += 1
+    gen = _poll_generation
     video_stop_event.clear()
     while not _frame_queue.empty():
         try:
             _frame_queue.get_nowait()
         except queue.Empty:
             break
-    video_thread = threading.Thread(target=_ffmpeg_video_reader, daemon=True)
+    video_thread = threading.Thread(target=_ffmpeg_video_reader, args=(gen,), daemon=True)
     video_thread.start()
-    root.after(33, _poll_frame, _poll_generation)
+    root.after(33, _poll_frame, gen)
 
 def stop_video():
     global ffmpeg_video_proc
@@ -333,22 +348,21 @@ def setup():
     def _do():
         global rtsp_socket, rtsp_state
         try:
-            if rtsp_socket:
-                try:
-                    rtsp_socket.close()
-                except Exception:
-                    pass
-            rtsp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            rtsp_socket.settimeout(5.0)
-            rtsp_socket.connect((rtsp_host, RTSP_PORT))
+            with _rtsp_lock:
+                if rtsp_socket:
+                    try:
+                        rtsp_socket.close()
+                    except Exception:
+                        pass
+                rtsp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                rtsp_socket.settimeout(5.0)
+                rtsp_socket.connect((rtsp_host, RTSP_PORT))
             root.after(0, update_status, "Connected — negotiating…", "orange")
 
-            # OPTIONS
             resp = _send_rtsp("OPTIONS")
             if not resp or len(resp.split()) < 2 or "200" not in resp.split()[1]:
                 raise Exception("OPTIONS failed")
 
-            # DESCRIBE
             resp = _send_rtsp("DESCRIBE", {"Accept": "application/sdp"})
             if not resp or len(resp.split()) < 2 or "200" not in resp.split()[1]:
                 raise Exception("DESCRIBE failed")
@@ -356,7 +370,6 @@ def setup():
                 _parse_sdp(resp.split(CRLF + CRLF, 1)[1])
             print(f"[Client] {video_width}x{video_height}  audio={has_audio} port={audio_port}")
 
-            # SETUP
             resp = _send_rtsp("SETUP")
             if not resp or len(resp.split()) < 2 or "200" not in resp.split()[1]:
                 raise Exception("SETUP failed")
@@ -367,11 +380,13 @@ def setup():
 
         except Exception as e:
             root.after(0, update_status, f"Setup failed: {e}", "red")
-            if rtsp_socket:
-                try:
-                    rtsp_socket.close()
-                except Exception:
-                    pass
+            with _rtsp_lock:
+                if rtsp_socket:
+                    try:
+                        rtsp_socket.close()
+                    except Exception:
+                        pass
+                rtsp_socket = None
             rtsp_state = "DISCONNECTED"
 
     threading.Thread(target=_do, daemon=True).start()
@@ -391,7 +406,6 @@ def play():
             rtsp_state = "PLAYING"
             root.after(0, update_status, "Playing", "green")
             root.after(0, start_video)
-            root.after(2500, start_audio)  
         else:
             root.after(0, update_status, "PLAY failed", "red")
 
@@ -428,13 +442,14 @@ def teardown():
         _send_rtsp("TEARDOWN")
         stop_audio()
         stop_video()
-        if rtsp_socket:
-            try:
-                rtsp_socket.close()
-            except Exception:
-                pass
-        rtsp_socket = None
-        session_id  = None
+        with _rtsp_lock:
+            if rtsp_socket:
+                try:
+                    rtsp_socket.close()
+                except Exception:
+                    pass
+            rtsp_socket = None
+            session_id  = None
         rtsp_state  = "DISCONNECTED"
         root.after(0, update_status, "Disconnected", "red")
         root.after(0, lambda: video_label.config(text="Video Stream...", image=""))
@@ -476,4 +491,22 @@ tk.Button(bottom_frame, text="Play",     command=play)    .pack(side="left", pad
 tk.Button(bottom_frame, text="Pause",    command=pause)   .pack(side="left", padx=5)
 tk.Button(bottom_frame, text="Teardown", command=teardown).pack(side="left", padx=5)
 
+
+def _on_close():
+    video_stop_event.set()
+    stop_audio()
+    stop_video()
+    if rtsp_socket is not None:
+        try:
+            _send_rtsp("TEARDOWN")
+        except Exception:
+            pass
+        try:
+            rtsp_socket.close()
+        except Exception:
+            pass
+    root.destroy()
+
+
+root.protocol("WM_DELETE_WINDOW", _on_close)
 root.mainloop()
