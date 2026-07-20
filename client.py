@@ -121,7 +121,7 @@ def maybe_auto_watch():
     else:
         watching_id = None
         view_mode = "IDLE"
-    update_buttons()y
+    update_buttons()
 
 #go live
 def toggle_own_live():
@@ -307,3 +307,128 @@ def draw_placeholder(target_canvas, msg):
     w = target_canvas.winfo_width()  or 480
     h = target_canvas.winfo_height() or 220
     target_canvas.create_text(w // 2, h // 2, text=msg, fill="gray")
+
+def draw_frame(target_canvas, frame):
+    box_w = target_canvas.winfo_width()  or 480
+    box_h = target_canvas.winfo_height() or 220
+    frame_h, frame_w = frame.shape[:2]
+    if frame_w <= 0 or frame_h <= 0 or box_w <= 0 or box_h <= 0:
+        return
+    scale = min(box_w / frame_w, box_h / frame_h)
+    new_w = max(1, int(frame_w * scale))
+    new_h = max(1, int(frame_h * scale))
+    x = (box_w - new_w) // 2
+    y = (box_h - new_h) // 2
+
+    img = Image.fromarray(frame).resize((new_w, new_h), Image.LANCZOS)
+    photo = ImageTk.PhotoImage(img)
+    target_canvas.photo = photo
+    target_canvas.delete("all")
+    target_canvas.create_rectangle(0, 0, box_w, box_h, fill="#0d0d14", outline="")
+    target_canvas.create_image(x, y, anchor='nw', image=photo)
+
+def update_own_canvas():
+    if is_broadcasting:
+        with own_preview_lock:
+            frame = own_preview_buf
+        draw_frame(own_canvas, frame) if frame is not None else draw_placeholder(own_canvas, "starting camera...")
+    else:
+        draw_placeholder(own_canvas, "Go Live to show your camera")
+    root.after(30, update_own_canvas)
+
+def update_remote_canvas():
+    if view_mode == "WATCH" and watching_id is not None:
+        with remote_streams_lock:
+            frame = remote_streams.get(watching_id)
+        draw_frame(canvas, frame) if frame is not None else draw_placeholder(canvas, f"waiting for {watching_id}...")
+    else:
+        draw_placeholder(canvas, "Connected." if running else "Enter server IP and click Connect")
+    root.after(30, update_remote_canvas)
+
+#connect
+def connect():
+    global client_socket, running, server_ip
+    ip = ip_var.get().strip()
+    if not ip:
+        return
+    server_ip = ip
+    try:
+        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client_socket.connect((ip, CONTROL_PORT))
+        running = True
+        log(f"Connected to {ip}")
+        status_var.set("● connected")
+        status_label.config(fg=GREEN)
+        update_buttons()
+        threading.Thread(target=receive_loop, daemon=True).start()
+    except Exception as e:
+        log(f"Connection failed: {e}")
+        status_var.set("● failed")
+        status_label.config(fg=RED)
+
+#layout
+header = tk.Frame(root, bg=BG)
+header.pack(fill='x', padx=14, pady=(14, 2))
+tk.Label(header, text="Live Stream Client", font=FONT_H1, bg=BG, fg=ACCENT).pack(side='left')
+status_var = tk.StringVar(value="● offline")
+status_label = tk.Label(header, textvariable=status_var, font=FONT, bg=BG, fg=MUTED)
+status_label.pack(side='right')
+
+conn_row = tk.Frame(root, bg=BG)
+conn_row.pack(pady=6)
+tk.Label(conn_row, text="Server IP:", font=FONT, bg=BG, fg=FG).pack(side='left', padx=4)
+ip_var = tk.StringVar(value="127.0.0.1")
+tk.Entry(conn_row, textvariable=ip_var, font=FONT, width=16, bg=BOX_BG, fg=FG,
+          insertbackground=FG, relief='flat').pack(side='left', padx=4, ipady=3)
+connect_btn = tk.Button(conn_row, text="Connect", font=FONT, bg=ACCENT, fg="#1e1e2e",
+    relief='flat', cursor='hand2', padx=12, pady=4, command=connect)
+connect_btn.pack(side='left', padx=4)
+
+log_box = scrolledtext.ScrolledText(root, height=7, width=58, font=FONT_MONO,
+    bg=BOX_BG, fg=FG, relief='flat', insertbackground=FG)
+log_box.pack(side='bottom', padx=14, pady=(4, 14), fill='both', expand=True)
+
+live_row = tk.Frame(root, bg=BG)
+live_row.pack(side='bottom', pady=4)
+live_btn = tk.Button(live_row, text="Go Live", font=FONT, bg="#3a3a4a", fg=FG,
+    relief='flat', cursor='hand2', padx=12, pady=5, state='disabled', command=toggle_own_live)
+live_btn.pack(side='left', padx=4)
+
+style = ttk.Style()
+style.theme_use('clam')
+style.configure("TCombobox", fieldbackground=BOX_BG, background=BG, foreground=FG,
+                 arrowcolor=ACCENT, bordercolor="#3a3a4a")
+watch_var = tk.StringVar(value="(nobody live)")
+watch_dropdown = ttk.Combobox(live_row, textvariable=watch_var, state='disabled', width=16)
+watch_dropdown['values'] = ["(nobody live)"]
+watch_dropdown.pack(side='left', padx=4)
+
+watch_btn = tk.Button(live_row, text="Watch", font=FONT, bg="#3a3a4a", fg=FG,
+    relief='flat', cursor='hand2', padx=12, pady=5, state='disabled', command=watch_selected)
+watch_btn.pack(side='left', padx=4)
+stop_watch_btn = tk.Button(live_row, text="Stop Watching", font=FONT, bg="#3a3a4a", fg=FG,
+    relief='flat', cursor='hand2', padx=12, pady=5, state='disabled', command=stop_watching)
+stop_watch_btn.pack(side='left', padx=4)
+
+video_frame = tk.Frame(root, bg=BG)
+video_frame.pack(padx=14, pady=(2, 8), fill='both', expand=True)
+video_frame.columnconfigure(0, weight=1)
+video_frame.rowconfigure(1, weight=1)   # remote canvas row
+video_frame.rowconfigure(3, weight=1)   # own canvas row — same weight = same size
+
+tk.Label(video_frame, text="Remote", font=FONT, bg=BG, fg=MUTED).grid(
+    row=0, column=0, sticky='w')
+canvas = tk.Canvas(video_frame, bg="#0d0d14", highlightthickness=0)
+canvas.grid(row=1, column=0, sticky='nsew', pady=(0, 6))
+
+tk.Label(video_frame, text="You", font=FONT, bg=BG, fg=MUTED).grid(
+    row=2, column=0, sticky='w')
+own_canvas = tk.Canvas(video_frame, bg="#0d0d14", highlightthickness=0)
+own_canvas.grid(row=3, column=0, sticky='nsew')
+
+draw_placeholder(canvas, "Enter server IP and click Connect")
+draw_placeholder(own_canvas, "Go Live to show your camera")
+log("Ready.")
+update_own_canvas()
+update_remote_canvas()
+root.mainloop()
