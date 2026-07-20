@@ -238,3 +238,134 @@ def accept_uploads():
         except Exception:
             break
         threading.Thread(target=relay_upload, args=(conn,), daemon=True).start()
+        def server_camera_loop():
+    global own_preview_buf, server_broadcasting
+    while server_broadcasting:
+        ret, frame = server_cam.read()
+        if not ret:
+            time.sleep(0.05)
+            continue
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        with own_preview_lock:
+            own_preview_buf = cv2.flip(rgb, 1)  
+        if not server_paused:
+            _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            broadcast(TYPE_LIVE, pack_live_payload(SERVER_STREAM_ID, buf.tobytes()))
+        time.sleep(1 / 20)
+    try: server_cam.release()
+    except Exception: pass
+
+def start_own_broadcast():
+    global server_cam, server_broadcasting, server_paused
+    server_cam = cv2.VideoCapture(0)
+    if not server_cam.isOpened():
+        log("No camera found on this machine.")
+        return
+    server_broadcasting = True
+    server_paused = False
+    broadcast_text(f"STARTED:{SERVER_STREAM_ID}")
+    log("Server camera started — broadcasting to all clients.")
+    own_start_btn.config(state='disabled', bg="#3a3a4a")
+    own_pause_btn.config(state='normal', bg=ACCENT, fg="#1e1e2e", text="Pause")
+    own_quit_btn.config(state='normal', bg=RED, fg="#1e1e2e")
+    threading.Thread(target=server_camera_loop, daemon=True).start()
+
+def toggle_own_pause():
+    global server_paused
+    server_paused = not server_paused
+    own_pause_btn.config(text="Resume" if server_paused else "Pause")
+    log("Server camera paused." if server_paused else "Server camera resumed.")
+
+def quit_own_broadcast():
+    global server_broadcasting, server_paused, own_preview_buf
+    server_broadcasting = False
+    server_paused = False
+    own_preview_buf = None
+    broadcast_text(f"ENDED:{SERVER_STREAM_ID}")
+    log("Server camera stopped.")
+    own_start_btn.config(state='normal', bg=ACCENT, fg="#1e1e2e")
+    own_pause_btn.config(state='disabled', bg="#3a3a4a", fg=FG, text="Pause")
+    own_quit_btn.config(state='disabled', bg="#3a3a4a", fg=FG)
+
+def listen_to_client(conn, addr):
+    label = f"{addr[0]}:{addr[1]}"
+    info = {"conn": conn, "addr": addr, "lock": threading.Lock(), "label": label}
+    with clients_lock:
+        clients.append(info)
+    root.after(0, update_counts)
+    root.after(0, lambda: refresh_client_row(label))
+    root.after(0, lambda: log(f"Connected: {label}"))
+
+    with live_state_lock:
+        active = list(live_streams.keys())
+    for sid in active:
+        try:
+            send_text(conn, f"STARTED:{sid}", lock=info["lock"])
+        except Exception:
+            pass
+    if server_broadcasting:
+        try:
+            send_text(conn, f"STARTED:{SERVER_STREAM_ID}", lock=info["lock"])
+        except Exception:
+            pass
+
+    receiver = FrameReceiver()
+    while not is_stopped:
+        try:
+            chunk = conn.recv(4096)
+            if not chunk:
+                raise ConnectionError("closed")
+            receiver.feed(chunk)
+            for msg_type, payload in receiver.pop_messages():
+                if msg_type != TYPE_TEXT:
+                    continue
+                cmd = payload.decode(errors="ignore").strip()
+                if not cmd:
+                    continue
+                method, headers = parse_rtsp_message(cmd)
+                cseq = headers.get("CSeq")
+
+                if method == "SETUP":
+                    with live_state_lock:
+                        live_streams[label] = {"ip": addr[0], "conn": None, "state": "SETUP"}
+                    send_text(conn, build_rtsp_response(cseq, session=label), lock=info["lock"])
+                    root.after(0, lambda: refresh_client_row(label))
+                    root.after(0, lambda: log(f"SETUP from {label} (Session: {label})"))
+
+                elif method == "PLAY":
+                    with live_state_lock:
+                        entry = live_streams.get(label)
+                        if entry is not None:
+                            entry["state"] = "PLAY"
+                    if entry is None:
+                        send_text(conn, build_rtsp_response(cseq, code=454, reason="Session Not Found"),
+                                   lock=info["lock"])
+                        continue
+                    send_text(conn, build_rtsp_response(cseq, session=label), lock=info["lock"])
+                    broadcast_text(f"STARTED:{label}")
+                    root.after(0, update_counts)
+                    root.after(0, lambda: refresh_client_row(label))
+                    root.after(0, lambda: log(f"PLAY from {label} — now live"))
+
+                elif method == "TEARDOWN":
+                    with live_state_lock:
+                        was_live = label in live_streams
+                    send_text(conn, build_rtsp_response(cseq, session=label), lock=info["lock"])
+                    if was_live:
+                        end_stream(label, notify=True)
+        except Exception:
+            break
+
+    with clients_lock:
+        clients[:] = [c for c in clients if c["conn"] is not conn]
+    root.after(0, update_counts)
+    root.after(0, lambda: remove_client_row(label))
+
+    with live_state_lock:
+        was_live = label in live_streams
+    if was_live:
+        end_stream(label, notify=True)
+
+    root.after(0, lambda: log(f"Disconnected: {label}"))
+    try: conn.close()
+    except Exception: pass
