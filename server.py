@@ -238,7 +238,7 @@ def accept_uploads():
         except Exception:
             break
         threading.Thread(target=relay_upload, args=(conn,), daemon=True).start()
-        def server_camera_loop():
+def server_camera_loop():
     global own_preview_buf, server_broadcasting
     while server_broadcasting:
         ret, frame = server_cam.read()
