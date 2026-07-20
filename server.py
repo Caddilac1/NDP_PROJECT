@@ -103,6 +103,7 @@ def refresh_client_row(label):
     else:
         client_rows[label] = client_tree.insert(
             "", tk.END, values=(label, status), tags=(status.replace(" ", "_"),))
+        
 def remove_client_row(label):
     iid = client_rows.pop(label, None)
     if iid is not None:
@@ -238,6 +239,7 @@ def accept_uploads():
         except Exception:
             break
         threading.Thread(target=relay_upload, args=(conn,), daemon=True).start()
+        
         def server_camera_loop():
     global own_preview_buf, server_broadcasting
     while server_broadcasting:
@@ -369,3 +371,74 @@ def listen_to_client(conn, addr):
     root.after(0, lambda: log(f"Disconnected: {label}"))
     try: conn.close()
     except Exception: pass
+
+def accept_clients():
+    while not is_stopped:
+        try:
+            control_socket.settimeout(1.0)
+            conn, addr = control_socket.accept()
+        except socket.timeout:
+            continue
+        except Exception:
+            break
+        threading.Thread(target=listen_to_client, args=(conn, addr), daemon=True).start()
+
+def start_server():
+    global control_socket, live_socket, is_stopped
+    is_stopped = False
+
+    control_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    control_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    control_socket.bind((HOST, CONTROL_PORT))
+    control_socket.listen(5)
+
+    live_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    live_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    live_socket.bind((HOST, LIVE_PORT))
+    live_socket.listen(5)
+
+    try:
+        ip = socket.gethostbyname(socket.gethostname())
+    except Exception:
+        ip = "127.0.0.1"
+    log(f"Server IP: {ip}   (ports {CONTROL_PORT}/{LIVE_PORT})")
+
+    start_btn.config(state='disabled', bg="#3a3a4a")
+    stop_btn.config(state='normal', bg=RED, fg="#1e1e2e")
+
+    threading.Thread(target=accept_clients, daemon=True).start()
+    threading.Thread(target=accept_uploads,  daemon=True).start()
+
+def stop_server():
+    global is_stopped
+    is_stopped = True
+    if server_broadcasting:
+        quit_own_broadcast()
+    log("Server stopped.")
+
+    with clients_lock:
+        for c in clients:
+            try: c["conn"].close()
+            except Exception: pass
+        clients.clear()
+    with live_state_lock:
+        for entry in live_streams.values():
+            conn = entry.get("conn")
+            if conn:
+                try: conn.close()
+                except Exception: pass
+        live_streams.clear()
+
+    if control_socket:
+        try: control_socket.close()
+        except Exception: pass
+    if live_socket:
+        try: live_socket.close()
+        except Exception: pass
+
+    update_counts()
+    clear_client_rows()
+    with live_preview_lock:
+        live_previews.clear()
+    start_btn.config(state='normal', bg=ACCENT)
+    stop_btn.config(state='disabled', bg="#3a3a4a", fg=FG)
