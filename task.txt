@@ -1,0 +1,22 @@
+ Elvishia(task):
+- client.py lines 1-135
+
+Evelyn (task):
+- client.py lines 137-309
+
+Caddilac (task):
+- client.py lines 311-434
+- server.py lines 1-105
+
+Esinam (task):
+- server.py lines 107- 241
+
+Bismark (task):
+- server.py lines 243-373
+
+Sammy (task):
+- server.py lines 375- 444
+
+Colllins (task):
+- server.py lines 446-513
+- protocol.py lines 1-75
