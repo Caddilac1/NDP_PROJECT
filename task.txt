@@ -1,22 +1,27 @@
  Elvishia(task):
-- client.py lines 1-135
+- Client startup and UI setup for the live-stream application.
+- Implemented connection controls and status updates using connect(), update_buttons(), and refresh_watch_dropdown().
 
 Evelyn (task):
-- client.py lines 137-309
+- Client live-broadcast control flow.
+- Implemented toggle_own_live(), send_play(), begin_own_live(), camera_loop(), and stop_own_live().
 
 Caddilac (task):
-- client.py lines 311-434
-- server.py lines 1-105
+- Server upload handling and stream registration.
+- Implemented relay_upload() and accept_uploads() to receive camera data from clients and attach it to a stream.
 
 Esinam (task):
-- server.py lines 107- 241
+- Server RTSP session handling for each client.
+- Implemented listen_to_client() to process SETUP, PLAY, and TEARDOWN requests.
 
 Bismark (task):
-- server.py lines 243-373
+- Server-side broadcast and preview management.
+- Implemented start_own_broadcast(), toggle_own_pause(), quit_own_broadcast(), and the preview update functions.
 
 Sammy (task):
-- server.py lines 375- 444
+- Client-side watching and incoming media processing.
+- Implemented watch_selected(), stop_watching(), handle_text(), receive_loop(), and the canvas drawing helpers.
 
 Colllins (task):
-- server.py lines 446-513
-- protocol.py lines 1-75
+- Shared protocol and message framing for control and live video data.
+- Implemented RTSP request/response builders, packet parsing, live-payload packing, and FrameReceiver().
