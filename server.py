@@ -442,3 +442,41 @@ def stop_server():
         live_previews.clear()
     start_btn.config(state='normal', bg=ACCENT)
     stop_btn.config(state='disabled', bg="#3a3a4a", fg=FG)
+    
+    #layout
+root.geometry("460x760")
+
+tk.Label(root, text="Live Stream Server", font=FONT_H1, bg=BG, fg=ACCENT).pack(pady=(14, 4))
+
+status_var = tk.StringVar(value="0 connected   |   0 live")
+tk.Label(root, textvariable=status_var, font=FONT, bg=BG, fg=MUTED).pack()
+
+btns = tk.Frame(root, bg=BG)
+btns.pack(pady=10)
+start_btn = tk.Button(btns, text="Start Server", font=FONT, bg=ACCENT, fg="#1e1e2e",
+    relief='flat', cursor='hand2', padx=14, pady=6, command=start_server)
+start_btn.pack(side='left', padx=5)
+stop_btn = tk.Button(btns, text="Stop Server", font=FONT, bg="#3a3a4a", fg=FG,
+    relief='flat', cursor='hand2', padx=14, pady=6, state='disabled', command=stop_server)
+stop_btn.pack(side='left', padx=5)
+
+tk.Label(root, text="Your camera", font=FONT, bg=BG, fg=MUTED).pack(
+    anchor='w', padx=14, pady=(6, 0))
+own_canvas = tk.Canvas(root, height=140, bg="#0d0d14", highlightthickness=0)
+own_canvas.pack(padx=14, pady=(2, 6), fill='both', expand=True)
+
+own_btns = tk.Frame(root, bg=BG)
+own_btns.pack(pady=(0, 10))
+own_start_btn = tk.Button(own_btns, text="Start", font=FONT, bg=ACCENT, fg="#1e1e2e",
+    relief='flat', cursor='hand2', padx=12, pady=5, command=start_own_broadcast)
+own_start_btn.pack(side='left', padx=4)
+own_pause_btn = tk.Button(own_btns, text="Pause", font=FONT, bg="#3a3a4a", fg=FG,
+    relief='flat', cursor='hand2', padx=12, pady=5, state='disabled', command=toggle_own_pause)
+own_pause_btn.pack(side='left', padx=4)
+own_quit_btn = tk.Button(own_btns, text="Quit", font=FONT, bg="#3a3a4a", fg=FG,
+    relief='flat', cursor='hand2', padx=12, pady=5, state='disabled', command=quit_own_broadcast)
+own_quit_btn.pack(side='left', padx=4)
+
+tk.Label(root, text="Preview (click a client below)", font=FONT, bg=BG, fg=MUTED).pack(anchor='w', padx=14, pady=(4, 0))
+preview_canvas = tk.Canvas(root, height=220, bg="#0d0d14", highlightthickness=0)
+preview_canvas.pack(padx=14, pady=(2, 8), fill='both', expand=True)
